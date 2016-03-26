@@ -1,0 +1,446 @@
+#include<reg52.h>
+#include<stdio.h>
+#include<math.h>
+#define uint unsigned int
+#define uchar unsigned char
+#define Key1 0x80  //P3.7，按键1
+#define Key2 0x20  //P3.5, 按键2
+/*以下数据最后处理的时候要合并*/
+uchar comnum;//公共端显示值
+uchar timecount;//时间计数值
+uchar sec=59,min=59,hour=11;//秒分时
+uchar point;//控制中间两点
+uchar com3num;/*公共端3控制的方格数值*/
+uchar h1,h2,h4,h5;/*1,2,4,5控制的方格值*/
+
+void init();//初始化函数声明
+//void KeyInit();/*读取按键函数，按键初始设置*/
+void KeyRead();//读取按键并且执行按键操作
+
+/****以下是按键相关定义*****/
+uchar Trg=0;//Trg（triger代表是触发）
+uchar Cont=0;//Cont(continue)代表是连续按下
+uchar cnt_plus;//计算上面按键按住的长数 
+uchar cnt_plus2;//计算下面按键长按的计算值
+uchar cnt_plus3;//长加
+
+uchar keycount;//按键计数值
+uchar sec1,min1,hour1;//用于设置时间时所用到
+uchar setnum;//用于设置的是当前那个值
+uchar flashcount;//闪烁计算值
+bit flashflag;//闪烁标志
+//bit longkeyflag;//长按标志
+
+sbit beep=P3^6;//蜂鸣器控制管脚
+//sbit longkey2=P3^5;
+
+bit beepflag;//报时标志
+bit openbeep;//是否打开蜂鸣器标志
+bit opennum;
+bit lightflag;
+bit cal_flag;/*校准标志*/
+char cal_sec;//校准的秒数(有正负）
+uchar cal_sec2;//用于转换cal_sec为整数时用到
+bit cal_finish;//用于设置负数时确定是否只设置一次
+
+uchar table1[]={0xfd,0x70,0xee,0xfa/*3*/,0x73,0xbb,0xbf,0xf0,0xff,0xfb};//显示码表（0-9，不带方格）（共阴） (h点要置1）!!
+uchar table2[]={0x00/*不亮*/,0xa0,0x60,0x30,0x28,0x24,0x21,
+0x22,0x81/*8两边*/,0x42/*次两边*/,0x1c/*中间三横*/,0xff/*11全亮*/};//下面的8段
+uchar comtable[]={0xfe,0xfd,0xfb,0xf7,0xef};//5个公共端控制数组
+uchar data numtable[5];//显示那个数码管	 （5代表5个数据！！！Mark！！）
+
+void main()
+{
+	timecount=19;
+	comnum=0;
+	com3num=1;
+	cnt_plus=0;
+	keycount=0;
+//	P3=0xff;//暂定
+	point=0x00;//中间点
+
+//	beep=0;
+	setnum=0;
+	flashcount=0;
+	openbeep=0;
+	opennum=1;
+	lightflag=0;
+	cal_flag=0;
+	cal_sec=0;//校准值初始为0秒
+	cal_finish=0;
+//	longkeyflag=1;
+	init();
+	while(1)
+	{
+
+	}	
+}
+
+void init()//初始化函数
+{
+	TMOD=0x11;//两个16位
+	TH0=(65536-49996)/256;//49996
+	TL0=(65536-49996)%256;
+	TH1=(65536-3721)/256;//
+	TL1=(65536-3721)%256;
+	EA=1; 
+	ET0=1;//暂定
+	TR0=1;//暂定
+	ET1=1;
+	TR1=1;
+
+}
+
+/**********按键读取函数***********/
+void KeyRead()//读取按键并且执行按键操作
+{
+	uchar ReadData=~(P3|0x5f);//(P3|0x5f)^0xff;//P3组需要处理，没有按键的不变化(~P3)
+	Trg=ReadData &(ReadData^Cont);//判断是否点动,异或：不同就1
+	Cont=ReadData;//判断是否长按
+	if(setnum==0)
+	{
+	if(cal_flag==0)//用于区分校准的按键
+	{
+		if(Trg & Key1)/*设置是否需要鸣叫*/
+		{
+		openbeep=~openbeep;
+		}
+	}
+		if(openbeep)
+		{
+			if(Trg & Key2)//开：ON；
+			{
+				opennum=~opennum;
+			}
+		}	  
+	}
+	/*******************************/
+	if(Cont & Key1)//第一个按键长按，进入设置时间
+	{
+		cnt_plus++;//计时
+		if(cnt_plus>32)//大概2.5秒的时候触发
+		{
+			cnt_plus=0;//清零
+			setnum=1;//进入时的设置
+			ET0=0;//
+			TR0=0;//暂停定时器
+		}
+	}
+	else cnt_plus=0;//清零，有毛刺
+
+	if(TR0==0)//确定是否是设置时间
+	{
+		if(Trg & Key1)//第一个按键是否短按
+		{
+			setnum++;
+			if(setnum>3) 
+			{
+				setnum=0;
+				ET0=1;
+				TR0=1;
+			}
+		}
+		/******根据setnum而设置相应项目*******/	
+		if(setnum==1)//调节的是小时
+		{
+			if(Trg & Key2)//小时加
+			{
+				cnt_plus3=0;
+				hour++;
+				if(hour>23) hour=0;
+			}
+		}
+		if(setnum==2)//调节的是分钟
+		{
+			if(Trg & Key2)//分钟加
+			{
+				cnt_plus3=0;
+				min++;
+				if(min>59) min=0;
+			}
+		}
+		if(setnum==3)//调节的是秒
+		{
+			if(Trg & Key2)//秒加
+			{
+				cnt_plus3=0;//要清零
+				sec++;
+				if(sec>59) sec=0;
+			}
+		}
+		/*************设置时间时长按长加***********************/
+		if(Cont & Key2)//
+		{
+			cnt_plus3++;
+			if(cnt_plus3>28)
+			{
+				cnt_plus3=26;
+					switch(setnum)
+					{
+						case 1:hour++;if(hour>23){hour=0;};break;
+						case 2:min++;if(min>59){min=0;};break;
+						case 3:sec++;if(sec>59){sec=0;};break;
+						default : break;	
+					}
+			}	
+		}
+		/**********************************/
+	}
+	/****************************************/
+	/***********以下是人动设置校准时间，范围是每日校准：-20~~20秒*************/
+	if(TR0==1)//时间没有调节的时候才能进入
+	{
+		if(Cont & Key2)/*下面的按键长按：进入用户人动校准时间*/
+		{
+			cnt_plus2++;//为区分第一个长按，用cnt_plus2代表第二个长按
+			if(cnt_plus2>32)
+			{
+				cnt_plus2=0;//清零
+				cal_flag=~cal_flag;//校准标志
+			}
+		}
+		else cnt_plus2=0;
+		if(cal_flag)/*短触用于设置校准值：-20~~20秒范围。正数表示加快秒数，负数表示减慢秒数*/
+		{
+			if(Trg & Key1)//cal_sec加
+			{
+				cal_sec++;
+				if(cal_sec>20) cal_sec=-20;//大于20变为-20
+			}
+		}
+	}
+	/**************************************************/
+}
+
+void timer0() interrupt 1 //中断1任务：计算时间
+{
+	TH0=(65536-49996)/256;
+	TL0=(65536-49996)%256;
+	timecount++;//时间计算值,50ms一次
+	if(timecount>19)
+	{
+		timecount=0;//清零
+		sec++;//秒加一
+		if(sec>59)
+		{
+			sec=0;
+			min++;
+			if(min>59)
+			{
+				min=0;
+				hour++;
+				if(hour>23)
+				{
+					hour=0;
+				}
+			}
+		}
+	}
+	if(timecount%10==0) {point=(~point)& 0x20;}/***中间点闪烁，与上：0011 0000，后面6位保持为0***/
+	/********************添加校准时间：在凌晨1点00分30秒开始校准（神不知鬼不觉。。。）*/
+	if(hour==1 && min==0 && sec==30 && timecount<1)
+	{
+		if(cal_sec<0)//如果是负数要考虑之后再到达此时刻的情况
+		{
+			cal_finish=~cal_finish;
+			if(cal_finish)//进入校准
+			{
+				sec=sec+cal_sec;/*校准负数的时候*/
+			}
+		}//完成校准标志，防止下次遇到
+		else//如果是正数
+		{
+			sec=sec+cal_sec;
+		}
+	}
+	/*************************************************************************************/
+	/************添加整点半点报时功能*************/
+	if((sec<2)&&(min==0))  
+	{
+		beepflag=1;
+		if(opennum) beep=0;
+		else {beep=1;}//只留下led闪烁
+	}//整点报时
+	else if((sec==0)&&(min==30)&&(timecount<8)) 
+		{
+		if(opennum) beep=0;
+		else {beep=1;lightflag=1;}
+		}//半点报时
+	else {beep=1;lightflag=0;}
+	/***分离秒，分开管理***/
+	if((beepflag==1)||(beep==0)||(lightflag==1))
+	{
+		switch(sec%10)//每个方格负责的余数是一样的
+		{
+			case 0:com3num=11;break;//报时的时候全亮起！
+			case 1:com3num=0;break;
+			case 2:com3num=11;if(timecount>18) {beepflag=0;}break;
+			default :break;
+		}
+	}
+	else
+	{
+		switch(sec%10)//每个方格负责的余数是一样的
+		{
+			case 0:com3num=1;break;
+			case 1:com3num=2;break;
+			case 2:com3num=3;break;
+			case 3:com3num=4;break;
+			case 4:com3num=5;break;
+			case 5:com3num=6;break;
+			case 6:com3num=7;break;
+			case 7:com3num=8;break;
+			case 8:com3num=9;break;
+			case 9:com3num=10;break;
+			default :break;
+		}
+		//////
+	}
+	/*********以下是切换显示*********/
+	if(((sec>14)&&(sec<21))||((sec>34)&&(sec<41))||(sec>54))//显示秒行走的区间
+	{
+		numtable[0]=0x00;  /*0是关闭*/
+		numtable[1]=0x20 & point;
+		numtable[2]=table1[sec/10] & point; //中间两点 和 方格值的 与 运算	  从0开始！
+		numtable[3]=table1[sec%10];//分
+		numtable[4]=table2[com3num];		
+	}
+	else//否则显示的是时分
+	{
+		if(hour<10) //去除前面的零
+		{numtable[0]=table1[hour/10] & 0x00;}
+		else
+		{numtable[0]=table1[hour/10];}//时
+		numtable[1]=table1[hour%10] & point;
+		numtable[2]=table1[min/10] & point;//分
+		numtable[3]=table1[min%10];
+		numtable[4]=table2[com3num];
+	}
+	/********************/	
+	if(openbeep)//进入是否设置鸣叫的显示
+	{
+			if(opennum)
+			{
+			numtable[0]=0x1f;//b
+			numtable[1]=0x00;
+			numtable[2]=0x1e;//o
+			numtable[3]=0x16;//n
+			numtable[4]=0x00;//
+			}
+			else
+			{
+			numtable[0]=0x1f;//b
+			numtable[1]=0xdd;//O
+			numtable[2]=0x87;//F
+			numtable[3]=0x87;//F
+			numtable[4]=0x00;//				
+			}
+	}
+	/*************************************/
+	/*************以下是设置校准秒数的显示*********/
+	if(cal_flag)//校准标志为1时的显示
+	{
+		numtable[0]=0x00;//前1个不显示
+		if(cal_sec>=0) numtable[1]=0x00;
+		else numtable[1]=0x02;//负号
+		numtable[4]=0x03;//共阴版：下面一行右边两个亮起
+		if(cal_sec<0) 
+		{
+		cal_sec2=abs(cal_sec);/*取整数，好处理*/
+		numtable[2]=table1[cal_sec2/10]&0xdf;
+		numtable[3]=table1[cal_sec2%10];
+		}
+		else
+		{
+		numtable[2]=table1[cal_sec/10]&0xdf;
+		numtable[3]=table1[cal_sec%10];
+		}
+	}
+	/***************************************************/
+}
+
+void timer1() interrupt 3//中断3任务：扫描,按键检测
+{
+	TH1=(65536-3721)/256;
+	TL1=(65536-3721)%256;
+//	readtemp=P3;//
+	P3=P3|0x1f;//低五位关闭（公共端位） P3=P3 | 0x1f;	（修改点：P3=P3 | 0x1f）
+	P1=numtable[comnum];//输入要显示的数据
+
+	/*******************************************/
+	P3=P3&comtable[comnum];//扫描从左到右		（修改点：P3=P3 | comtable[comnum] ）
+	keycount++;/*计算何时进入按键*/
+	comnum++;
+	if(comnum>4) comnum=0;
+	if(keycount>12)//大概80ms
+	{
+		keycount=0;
+		KeyRead();//读取按键操作	（暂未引用）
+	}
+	/********************下面添加调时程序**************/
+	if(TR0==0)//判断是否为调时状态	   中间两点常亮
+	{
+		//h1=0xf7;h2=0xf7;h4=0xf7;h5=0xf7;//调节时间方格全亮！
+		flashcount++;/*闪烁时间计算值*/
+
+		if(flashcount==120)	flashflag=~flashflag; //大概闪烁0.4秒
+		if(flashcount>240)
+			{
+				flashcount=0;
+				flashflag=~flashflag;
+			}
+ /********************************************************/
+		if(setnum==3)
+		{
+			numtable[0]=0x00;
+			numtable[1]=0x20;//h2亮起
+			numtable[2]=table1[sec/10];//秒 h3亮起
+			numtable[3]=table1[sec%10];//秒
+			numtable[4]=0xff;
+		}
+		else
+		{
+			if(hour<10) //去除前面的零
+			{numtable[0]=0x00;}
+			else
+			{numtable[0]=table1[hour/10];}//时
+			numtable[1]=table1[hour%10];
+			numtable[2]=table1[min/10];//分
+			numtable[3]=table1[min%10];//分
+			numtable[4]=0xff;
+		}		
+		//////////////////////////////////
+//		setnum=1;
+	/*******************************************/
+	switch(setnum)//在P1口输入数据之后运行此语句
+	{
+		case 0:break;//退出设置
+		case 1://控制时的闪烁
+		     {
+			 	if(flashflag)
+				{
+					numtable[0]=0x00;//留下方格
+					numtable[1]=0x20;
+				}
+			 }break;
+		case 2://控制分钟的闪烁
+			 {
+			 	if(flashflag)
+				{
+					numtable[2]=0x20;
+					numtable[3]=0x00;
+				}
+			 }break;
+		case 3://控制秒的闪烁
+			 {
+			 	if(flashflag)
+				{
+					numtable[2]=0x20;
+					numtable[3]=0x00;
+				}
+			 }break;
+		default:break;
+	}
+	}
+	/********************************************************/
+}
